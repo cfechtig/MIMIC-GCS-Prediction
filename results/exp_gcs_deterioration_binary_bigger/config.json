@@ -1,0 +1,15 @@
+{
+  "experiment_name": "exp_gcs_deterioration_binary_bigger",
+  "task": "classification",
+  "epochs": 30,
+  "batch_size": 128,
+  "lr": 0.001,
+  "dropout": 0.2,
+  "lstm_hidden": 128,
+  "static_hidden": [
+    128,
+    64,
+    32
+  ],
+  "save_dir": "results/exp_gcs_deterioration_binary_bigger"
+}

@@ -1,0 +1,14 @@
+{
+  "experiment_name": "exp_gcs_deterioration_binary_smallbatch",
+  "task": "classification",
+  "epochs": 30,
+  "batch_size": 64,
+  "lr": 0.001,
+  "dropout": 0.2,
+  "lstm_hidden": 64,
+  "static_hidden": [
+    64,
+    32
+  ],
+  "save_dir": "results/exp_gcs_deterioration_binary_smallbatch"
+}
