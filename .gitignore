@@ -1,4 +1,5 @@
-/data
 /first attempt (neurophenotypes)
-/model_poc.ipynb
-/__pycache__
+/data/*.csv
+__pycache__/
+*.parquet
+*.pickle
