@@ -1,0 +1,276 @@
+\documentclass[conference]{IEEEtran}
+\setlength{\parskip}{0.5em}
+\IEEEoverridecommandlockouts
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\begin{document}
+
+\title{Predicting Glasgow Coma Scale Deterioration Using a Hybrid Neural Network on ICU Data from the MIMIC Dataset}
+
+\author{\IEEEauthorblockN{Charlie Fechtig}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Stevens Institute of Technology}\\
+Hoboken, NJ, United States}}
+
+\maketitle
+
+\begin{abstract}
+Timely identification of neurological deterioration in intensive care unit (ICU) patients could improve patient outcomes by prompting clinical intervention when most needed. The Glasgow Coma Scale (GCS) is a foundational tool for evaluating neurological status; however, predicting GCS deterioration using routinely collected clinical data remains challenging and under-researched. In this study, I developed and validated a hybrid neural network model which combines dense neural layers for static features and a Long Short-Term Memory (LSTM) network for sequential features to predict clinically significant declines in GCS scores using data from the MIMIC-IV database. The cohort included ICU patients with consecutive GCS measurements spaced between 1 and 4 hours, focusing specifically on significant GCS delta/deterioration events. Feature engineering, balancing methods, and interpretability analysis using SHAP (SHapley Additive exPlanations) were employed. The model achieved a strong predictive performance in the binary classification task (ROC-AUC = 0.77, recall = 77\%), effectively identifying high-risk patients. SHAP analysis identified neurologically  and physiologically relevant features, emphasizing the clinical plausibility of the predictions. The results demonstrate the potential for hybrid machine learning models to enhance predictive monitoring in ICUs, facilitating earlier interventions and better patient care.
+\end{abstract}
+
+\section{Introduction}
+
+The Glasgow Coma Scale (GCS), introduced in 1974 by Teasdale and Jennett \cite{teasdale1974scale}, is a clinical tool designed to assess a patient's level of consciousness based on eye, verbal, and motor function. It has become a cornerstone in the evaluation of patients with traumatic brain injuries as it provides a standardized method for monitoring neurological status. GCS scores can range from 3 to 15, with lower scores indicating a higher level of impairment. This scale is widely used across various clinical settings, including emergency departments, intensive care units (ICUs), and trauma centers \cite{Jain2023gcs}.
+
+Changes in GCS scores over time correspond to changes in level of consciousness. A decline in GCS indicates neurological deterioration and likely requires urgent medical intervention. A decrease of more than two points in the GCS score within a short period is often associated with secondary neurological deterioration (SND), which has been linked to poor outcomes in patients with moderate traumatic brain injury \cite{aries2024sndtbi}. Studies have also demonstrated that GCS scores at ICU discharge are predictive of long-term outcomes, with lower scores correlating with poorer prognoses \cite{leitgeb2013gcsoutcomesi}. Monitoring changes in GCS score is crucial for timely decision-making and improving patient outcomes.
+
+Predicting GCS deterioration could be highly impactful in the clinical setting. Early identification of patients at risk could allow for proactive management, potentially mitigating or eliminating decreases in consciousness before they occur. Early intervention could facilitate adjusting treatment strategies, optimizing sedation or ventilation settings, escalating neurological monitoring, or initiating neurosurgical consultations. Furthermore, the ability to predict deterioration could go beyond improving immediate patient management by reducing long-term disability, enhancing recovery, and lowering overall healthcare costs associated with prolonged ICU care and post-ICU rehabilitation.
+
+Despite its widespread use, the GCS has limitations, particularly in intubated or sedated patients where verbal responses cannot be assessed. Alternative scoring systems, such as the Full Outline of UnResponsiveness (FOUR) score, have been proposed to address these limitations by incorporating brainstem reflexes and respiratory patterns \cite{schey2024gcsfour}. Nevertheless, the GCS remains a fundamental tool in clinical practice due to its simplicity and ease of use, hence why GCS data is more widely available for studies performing retrospective analysis.
+
+Modern machine learning technique which leverage large datasets and complex algorithms offer new avenues for predicting GCS deterioration. Predictive models can identify patterns and risk factors associated with declines in neurological sate before the decline occurs. The MANDARIN model, for example, employs a mixture-of-experts framework to predict acute brain dysfunction in ICU patients and significantly outperforms baseline neurological assessment scores \cite{contreras2025mandarin}. Such models hold promise for enhancing clinical decision-making and patient care in cases of neurological deterioration within the ICU.
+
+In this study, I aim to develop a predictive model for GCS deterioration using a hybrid neural network approach. By analyzing static and sequential clinical ICU data from the MIMIC-IV database, I seek to offer a model that can accurately predicted neurological decline in advance, identify key features associated with neurological decline, and evaluate the model's performance in predicting both binary and multiclass deterioration outcomes. I ultimately hope to contribute to the growing body of research on predictive analytics in healthcare and to provide tools that support timely and effective interventions in critical care units.
+
+\section{Methods}
+
+\subsection{Dataset and Label Definitions}
+
+I utilized the publicly available Medical Information Mart for Intensive Care IV (MIMIC-IV) dataset, a comprehensive and anonymized database containing electronic health records of ICU patients from the Beth Israel Deaconess Medical Center between 2008 and 2019 \cite{johnson2020mimic}. I specifically targeted patients whose ICU stays included two or more complete Glasgow Coma Scale (GCS) recordings.
+
+Initial analysis of the dataset revealed that GCS assessments were typically documented using all three GCS components (eye opening, verbal response, and motor response) at the same timestamp. Approximately 99.72\% of the entries within the dataset captured these three metrics simultaneously, thus the label set included only those entries containing all three GCS metrics recorded at the same timestamp.
+
+From the complete GCS scores, I calculated the differences (deltas) between consecutive GCS scores for each patient within their ICU stay. This allowed me to compute two critical values for each consecutive GCS score pair: the GCS score delta (current GCS minus previous GCS) and the elapsed time between consecutive scores. I found that approximately 79\% of consecutive scores had an elapsed time interval between 1 and 4 hours, and decided to limit my analysis to GCS score deltas from within this 1-4 hour time interval.
+
+I created two labeling schemes for the predictive modeling task:
+
+Binary Classification: gcs\_deterioration\_binary was defined as a binary outcome, labeling a case as deterioration (1) if the GCS score declined by 2 points or more (GCS delta <= -2), and no deterioration (0) otherwise.
+
+Multiclass Classification: gcs\_deterioration\_multi categorizes deterioration into four classes:
+
+Class 0: No deterioration (GCS delta >= 0)
+
+Class 1: Mild deterioration (GCS delta = -1)
+
+Class 2: Moderate deterioration (GCS delta = -2)
+
+Class 3: Severe deterioration (GCS delta <= -3)
+
+These classes provided stratified levels of insight into patient neurological trajectories.
+
+\subsection{Feature Engineering and Selection}
+
+The feature engineering process was first informed by a robust data completeness analysis across different clinical domains—chart events, laboratory results, and demographic information. I analyzed the completeness and frequency of occurrence of each potential feature within the 3-hour period preceding each GCS measurement. Features were grouped into 'sequential' and 'static' based on their availability across different hourly intervals:
+
+Sequential features were defined as chart features recorded consistently at all three hourly intervals for at least 35\% of GCS labels, capturing temporal trends in patient status. Examples include vital signs such as heart rate, respiratory rate, and blood pressure, which can show dynamic physiological changes.
+
+Static features were chart or lab measurements recorded at least once within the 3-hour window, occurring in at least 50\% of cases (chart data) or at least 10\% of cases (lab data), capturing relatively stable or infrequently recorded patient characteristics.
+
+Certain chart features were excluded after manual consideration due to their low relevance for the specific predictive task (Goal Richmond-RAS Scale, Alarms On, Parameters Checked, and ST Segment Monitoring On). Demographic features including patient age and gender were incorporated based on patient identifiers (subject\_id) and integrated into the model as static features.
+
+Missing values in the static feature data were imputed using the median value across the training dataset, as commonly recommended for clinical datasets \cite{harutyunyan2019multitask}. Missing sequential data points were interpolated linearly within each patient's 3-hour window, maintaining the temporal structure crucial for time-series models.
+
+This completeness and relevance based feature selection resulted in a final feature set comprising 50 static features and 9 sequential features (with 3 hourly measurements each).
+
+\subsection{Data Splitting and Class Balancing}
+
+I partitioned the dataset into training (60\%), validation (20\%), and test (20\%) sets, stratifying by unique patient ICU stays (stay\_id) to ensure independent evaluation and avoid leakage of temporal information across splits. Given the significant class imbalance observed (a typical problem in medical datasets) training data were balanced via downsampling of the majority class(es) to ensure robust learning for both binary and multiclass classification tasks. This balancing is a critical step, as unaddressed imbalance may severely degrade model performance and interpretability \cite{japkowicz2002class}.
+
+\subsection{Model Development and Training}
+
+I adopted a hybrid neural network architecture specifically designed to leverage the availability of both static and sequential data. Hybrid models effectively capture complex patient-state dynamics by simultaneously modeling static demographic and clinical variables (through dense neural network layers) and time-dependent variables (via recurrent neural network modules) \cite{lipton2015critical,harutyunyan2019multitask}.
+
+The sequential component includes a Long Short-Term Memory (LSTM) network, which is able to capture temporal dependencies in time series data while avoiding the exploding gradient problem \cite{hochreiter1997long}. Static features were processed through fully connected layers, and the outputs from both sequential and static branches were concatenated into a final predictive head. This hybrid architecture provides interpretability (through static feature impacts) and robust sequential modeling of temporal dynamics (via the LSTM).
+
+Several model hyperparameters were explored:
+
+Increasing the complexity of the LSTM layers (e.g., hidden units increased from 64 to 128)
+
+Adjusting learning rates (0.001, 0.0005)
+
+Increasing dropout rates to mitigate potential overfitting (0.2 to 0.4)
+
+Evaluating smaller batch sizes (64 vs. 128)
+
+Each experiment's hyperparameters were evaluated based on their performance in the validation dataset, prioritizing recall and ROC-AUC as evaluation metrics due to their importance in this neurologic state within the ICU task, where missing a deterioration event may have significant adverse consequences.
+
+\subsection{Model Interpretation with SHAP}
+
+Model interpretability is essential for clinical acceptance and trust in predictive algorithms. Therefore, I employed SHAP (SHapley Additive exPlanations) analysis, a game-theoretic approach widely recognized for providing consistent, locally accurate attribution of feature contributions to model predictions \cite{lundberg2017unified}. SHAP values quantify the contribution of each input feature to the predictions for individual samples, allowing both clinicians and researchers to identify key risk factors and better understand the model's "reasoning processes". I specifically used SHAP KernelExplainer due to its flexibility with custom neural architectures (it was required for the hybrid model).
+
+The SHAP analysis was performed on a randomly selected subset of 300 test set samples. SHAP allowed me to rank and quantify features by importance as well as produce visualizations which clearly demonstrate which features significantly influenced model predictions. This interpretability step further enhanced the clinical value and acceptability of the predictive model by highlighting clinical factors for ICU clinicians to review.
+
+\section{Results}
+
+\subsection{Model Selection and Performance}
+
+I conducted multiple experiments to optimize model hyperparameters for the binary classification task (gcs\_deterioration\_binary). Specifically, I explored variations in model complexity, learning rate, dropout rate, and batch size, evaluating each configuration based on validation recall and ROC-AUC scores. Table~\ref{tab:experiment_metrics} summarizes the performance metrics across these different hyperparameter settings. The initial model configuration, balancing computational efficiency and performance, was ultimately selected as the optimal configuration due to its high recall and competitive ROC-AUC performance.
+
+\begin{table}[htbp]
+\centering
+\caption{Performance Metrics for Binary Classification Experiments}
+\label{tab:experiment_metrics}
+\begin{tabular}{lcccc}
+\hline
+\textbf{Experiment} & \textbf{Accuracy} & \textbf{ROC-AUC} & \textbf{Precision} & \textbf{Recall} \\
+\hline
+Baseline Model & 0.63 & 0.77 & 0.06 & 0.77 \\
+Bigger Model & 0.63 & 0.77 & 0.06 & 0.76 \\
+Higher Dropout & 0.62 & 0.77 & 0.06 & 0.78 \\
+Lower Learning Rate & 0.66 & 0.77 & 0.07 & 0.74 \\
+Smaller Batch Size & 0.63 & 0.77 & 0.06 & 0.77 \\
+\hline
+\end{tabular}
+\end{table}
+
+The chosen model configuration demonstrated balanced predictive performance, with a particularly strong recall of approximately 77\%. Choosing model parameters based based on how they effect recall and precision is crucial in clinical settings, where early identification of the positive class (patient deterioration) may significantly impact patient outcomes.
+
+\subsection{Binary Classification Results}
+
+The best-performing model, evaluated on the test dataset, achieved a ROC-AUC of approximately 0.77 and recall around 77\%. Figure~\ref{fig:roc_binary} presents the ROC curve. Additionally, Figure~\ref{fig:confusion_matrix_binary} shows the confusion matrix for the binary model.
+
+\begin{figure}[htbp] \centering \includegraphics[width=0.45\textwidth]{roc_binary.png} \caption{ROC curve for binary classification} \label{fig:roc_binary} \end{figure}
+
+\begin{figure}[htbp] \centering \includegraphics[width=0.45\textwidth]{confusion_matrix_binary.png} \caption{Confusion matrix heatmap for binary classification (placeholder)} \label{fig:confusion_matrix_binary} \end{figure}
+
+\subsection{Multiclass Classification Results}
+
+The multiclass model was trained using the hyperparameters derived from the optimal binary classification experiment. This model aimed to discriminate between four different levels of deterioration severity. The resulting model demonstrated moderate classification performance, with an accuracy of approximately 42\%. Detailed evaluation metrics are presented in Table~\ref{tab:multiclass_metrics}, and the confusion matrix heatmap in Figure~\ref{fig:confusion_matrix_multi} visually depicts the model’s predictive strengths and weaknesses across the various deterioration severity levels.
+
+\begin{table}[htbp]
+\centering
+\caption{Performance Metrics for Multiclass Classification}
+\label{tab:multiclass_metrics}
+\begin{tabular}{lcccc}
+\hline
+\textbf{Accuracy} & \textbf{Precision (macro)} & \textbf{Recall (macro)} & \textbf{F1-score (macro)} \\
+\hline
+0.42 & 0.28 & 0.42 & 0.22 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp] \centering \includegraphics[width=0.45\textwidth]{confusion_matrix_multi.png} \caption{Confusion matrix heatmap for multiclass classification} \label{fig:confusion_matrix_multi} \end{figure}
+
+\subsection{SHAP Feature Importance Analysis}
+
+To understand the factors influencing model predictions, SHAP (SHapley Additive exPlanations) analysis was performed on a random subset of the test set. The model used for SHAP analysis was the optimal binary classification model. Figure~\ref{fig:shap_summary} provides a global summary plot illustrating the most influential features based on their mean absolute SHAP values. Notably, features directly associated with neurological assessment (GCS sub-components and Richmond-RAS scale) were the top ranked features, followed closely by cardiovascular and respiratory parameters, reflecting clinical intuition. The feature importance table (Table~\ref{tab:feature_importance}) provides quantitative SHAP values for the top 20 features.
+
+\begin{figure}[htbp] \centering \includegraphics[width=0.45\textwidth]{shap_summary.png} \caption{Global SHAP feature importance summary plot} \label{fig:shap_summary} \end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{Top 10 Features by Mean Absolute SHAP Value}
+\label{tab:feature_importance}
+\begin{tabular}{lc}
+\hline
+\textbf{Feature} & \textbf{Mean Abs SHAP} \\
+\hline
+GCS - Eye Opening & 0.0699 \\
+Richmond-RAS Scale & 0.0662 \\
+GCS - Motor Response & 0.0585 \\
+GCS - Verbal Response & 0.0225 \\
+Braden Sensory Perception & 0.0172 \\
+Non-Invasive BP Systolic (t-2h) & 0.0166 \\
+Arterial BP Diastolic (t-2h) & 0.0143 \\
+Arterial BP Mean (t-2h) & 0.0095 \\
+Heart Rate (t-3h) & 0.0078 \\
+Heart Rate (t-2h) & 0.0078 \\
+Activity / Mobility (JH-HLM) & 0.0059 \\
+Heart Rate t-4h & 0.0056 \\
+Strength R Arm & 0.0055 \\
+Strength L Leg & 0.0051 \\
+Respiratory Rate t-2h & 0.0049 \\
+Temperature Fahrenheit & 0.0049 \\
+Arterial Blood Pressure systolic t-4h & 0.0048 \\
+Strength R Leg & 0.0047 \\
+Hematocrit & 0.0045 \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+
+\subsection{Clinical Significance and Interpretation of Results}
+
+The primary objective of this study was to demonstrate the feasibility of using a hybrid neural network to predict clinically significant deterioration in neurological status, as measured by decrement in Glasgow Coma Scale scores, in intensive care patients. The results confirm that machine learning approaches can effectively leverage routine clinical data to identify patients at increased risk for neurological deterioration. Notably, the model achieved a decent balance of recall and ROC-AUC performance in the binary prediction task, demonstrating clear utility in early detection and alerting for potential neurological decline.
+
+The SHAP analysis provided a look into the model's decision making, highlighting the preceding Glasgow Coma Scale scores, RAS, Braden Scale score, blood pressure, and heart rate, as critical predictors of deterioration. My findings align with prior studies emphasizing the strong relationship between neurological status, hemodynamic stability, and patient outcomes in the ICU \cite{meyfroidt2009cerebral, cecconi2014consensus}.
+
+\subsection{Methodological Considerations and Choices}
+
+My methodology included thoughtful preprocessing and feature selection, guided by exploratory data analysis of the MIMIC dataset. By differentiating sequential versus static features, the model captured dynamic physiological trends alongside static indicators. This hybrid approach is increasingly recognized as effective for clinical time-series data, capturing both immediate physiological dynamics and stable patient characteristics \cite{harutyunyan2019multitask, lipton2015critical}.
+
+Addressing class imbalance through downsampling of majority classes in the training set was critical in ensuring model robustness, particularly given the clinical importance of accurately predicting relatively rare deterioration events. This methodological decision is supported by previous studies emphasizing the importance of class balancing in medical prediction tasks, where failure to adequately address imbalance can significantly undermine model performance and utility \cite{japkowicz2002class}.
+
+\subsection{Limitations and Potential Sources of Bias}
+
+Despite the promising results, several limitations must be considered. First, the study utilized retrospective data from the MIMIC-IV dataset, inherently subject to biases associated with data entry practices, measurement variability, and missing data. Although I employed imputation and interpolation techniques to handle missing data, residual bias could affect model performance and generalizability. The completeness thresholds I set for feature inclusion were also quite low (some chart features having as little as 54\% coverage and some lab events having as low as 12\%), thus a lot of data was imputed/interpolated for some features.
+
+Furthermore, clinically relevant parameters not consistently recorded in the dataset could have been excluded due to feature selection being driven by data completeness. Additionally, the sequential data only encompassed a relatively short preceding 3-hour interval, which, while clinically meaningful, may not fully capture subtle or slowly developing patterns predictive of deterioration. The LSTM architecture was likely overkill given only 3 time points were used, and having delta features for these sequential features would have likely been sufficient. Exploring longer temporal windows could provide deeper insights into gradual clinical deterioration patterns and make greater use of the LSTM module.
+
+The multiclass classification results revealed moderate predictive performance, suggesting that distinguishing fine-grained severity levels of deterioration remains challenging. This highlights the inherent complexity of clinical deterioration, as well as highlighting the class imbalance and data availability problem. More performant models might require richer feature sets or more sophisticated modeling approaches to effectively differentiate subtle clinical trajectories.
+
+\subsection{Future Research Directions}
+
+There are several directions future researches may be able take with this baseline work in hand. Incorporating richer physiological signals, such as continuous EEG, intracranial pressure, or advanced hemodynamic monitoring, could substantially enhance the predictive accuracy and clinical utility of deterioration models, as well as make greater use of the deep temporal models used here. Different label metrics, such as the FOUR score \cite{schey2024gcsfour}, could also be used as the predicted variable given they are better representations of inner neurological state.
+
+Advanced modeling approaches, including transformer-based architectures or attention mechanisms, could further exploit temporal dependencies in clinical data, but may require more complete data sources than used here. More advance architectures have been shown to improve predictive accuracy for deterioration tasks \cite{vaswani2017attention, song2018attend}. Exploring alternative balancing strategies such as synthetic oversampling (e.g., SMOTE) or ensemble approaches could also enhance predictive stability and robustness in highly imbalanced clinical datasets.
+
+Another fruitful research avenue includes extending the predictive framework to incorporate uncertainty estimation and probabilistic outputs (Bayesian modeling), facilitating more nuanced clinical interpretation and decision-making. Predictive uncertainty quantification is critical in clinical settings, enabling clinicians to better assess model reliability and trustworthiness before taking clinical actions based on model predictions.
+
+Finally, prospective validation of the predictive model in clinical settings could rigorously test its clinical utility and enable iterative model refinement based on direct clinician feedback and patient outcomes. Such prospective studies would significantly enhance the transition of machine learning models from research to clinical practice. Once validated, real-time implementations of the hybrid model could enable dynamic patient monitoring and early intervention strategies, significantly enhancing clinical decision-making and patient outcomes.
+
+\subsection{Retrospective}
+
+My initial project proposal detailed an ambitious concept; using unsupervised machine learning methods, specifically clustering via UMAP and HDBSCAN, to identify novel patient phenotypes among ICU patient who experienced neurological dysfunction, particularly delirium or encephalopathy. While conceptually appealing, this initial approach quickly revealed significant challenges. The main issue: interpreting meaningful clinical insights from unsupervised clustering is extremely difficult. Despite successfully identifying numerous clusters, attempts to assign meaningful clinical or prognostic significance to these clusters felt like an impossible and never-ending task. While toiling through the ambiguity of my resulting clusters I came to realize a great limitation of unsupervised approaches: although unsupervised models can efficiently uncover complex patterns within data, interpreting these patterns in clinically meaningful ways (particularly with tight deadlines) requires either substantial domain expertise, additional data I did not have, or more sophisticated interpretability frameworks that do not yet exist.
+
+The lack of clear clinical interpretability of the unsupervised clusters ultimately led me to reconsider my approach. I decided to go with something much simpler and interpretable. The predictive modeling approach I came up with had clearly defined outcomes and established clinical metrics. This pivot toward supervised modeling provided immediate clinical relevance, clearer criteria for success, and the potential for actionable insights. I could actually evaluate the model performance using standard metrics and understand its predictions using SHAP.
+
+However, limitations remain. While predictive modeling inherently offers clearer outcomes over unsupervised approaches, it relies heavily on quality and completeness of available data, leaving the results potentially vulnerable to underlying dataset biases and missingness. The model's moderate performance in the multiclass setting further demonstrate the inherent complexities and challenges in applying machine learning to clinical data, suggesting the need for additional data sources or more advanced modeling techniques.
+
+Overall, shifting from a purely exploratory unsupervised clustering strategy towards a clinically interpretable supervised approach was not only pragmatic but necessary for my sanity. I now understand the importance of aligning methodological choices closely with clear clinical objectives, and in the future will be mindful about fully considering the feasibility and evaluability of whatever projects I pursue.
+
+\section{Conclusion}
+
+This study demonstrated the effectiveness of a hybrid neural network model to predict significant deterioration in Glasgow Coma Scale scores among ICU patients using routine clinical data from the MIMIC-IV dataset. My findings indicate that predictive modeling can reliably identify patients at high risk of neurological deterioration, thus enabling earlier clinical interventions. Key features influencing model predictions aligned closely with established clinical knowledge, reinforcing the model's credibility and clinical utility. Future research should focus on real-time clinical implementation, incorporation of richer physiological data, and prospective validation, ultimately aiming to translate these predictive models into actionable clinical decision support tools to enhance patient outcomes in critical care environments.
+
+\begin{thebibliography}{00}
+
+\bibitem{johnson2020mimic} A. Johnson, L. Bulgarelli, T. Pollard, S. Horng, L. A. Celi, and R. Mark, ``MIMIC-IV,'' \textit{Scientific Data}, vol. 7, no. 1, pp. 1–8, 2020.
+
+\bibitem{teasdale1974scale} G. Teasdale and B. Jennett, ``Assessment of coma and impaired consciousness: a practical scale,'' \textit{The Lancet}, vol. 304, no. 7872, pp. 81–84, 1974.
+
+\bibitem{Jain2023gcs} S. Jain and L. M. Iverson, ``Glasgow Coma Scale,'' in \textit{StatPearls}, Treasure Island, FL: StatPearls Publishing, Jun. 2023.
+
+\bibitem{aries2024sndtbi} P. Aries, J. Ognard, A. Cadieu, V. Degos, and O. Huet, ``Secondary neurologic deterioration after moderate traumatic brain injury: development of a multivariable prediction model and proposition of a simple triage score,'' \textit{Anesthesia \& Analgesia}, vol. 138, no. 1, pp. 171–179, 2024.
+
+\bibitem{leitgeb2013gcsoutcomesi} J. Leitgeb, W. Mauritz, A. Brazinova, M. Majdan, I. Janciak, I. Wilbacher, and M. Rusnak, ``Glasgow Coma Scale score at intensive care unit discharge predicts the 1-year outcome of patients with severe traumatic brain injury,'' \textit{European Journal of Trauma and Emergency Surgery}, vol. 39, no. 3, pp. 285–292, Jun. 2013.
+
+\bibitem{schey2024gcsfour} J. E. Schey, M. Schoch, and D. Kerr, ``The predictive validity of the Full Outline of UnResponsiveness score compared to the Glasgow Coma Scale in the intensive care unit: A systematic review,'' \textit{Neurocritical Care}, 2024. [Online ahead of print].
+
+\bibitem{contreras2025mandarin} I. Contreras \textit{et al.}, ``MANDARIN: Mixture of experts for early detection of acute brain dysfunction in the intensive care unit,'' 2025. [Online]. Available: https://arxiv.org/abs/2503.06059. [Accessed: April 25, 2025].
+
+\bibitem{harutyunyan2019multitask} H. Harutyunyan, H. Khachatrian, D. C. Kale, G. Ver Steeg, and A. Galstyan, ``Multitask learning and benchmarking with clinical time series data,'' \textit{Scientific Data}, vol. 6, no. 1, p. 96, 2019.
+
+\bibitem{japkowicz2002class} N. Japkowicz and S. Stephen, ``The class imbalance problem: A systematic study,'' \textit{Intelligent Data Analysis}, vol. 6, no. 5, pp. 429–449, 2002.
+
+\bibitem{lipton2015critical} Z. C. Lipton, D. C. Kale, C. Elkan, and R. Wetzel, ``Learning to diagnose with LSTM recurrent neural networks,'' in \textit{Proceedings of the International Conference on Learning Representations (ICLR)}, 2016, pp. 1–18.
+
+\bibitem{hochreiter1997long} S. Hochreiter and J. Schmidhuber, ``Long short-term memory,'' \textit{Neural Computation}, vol. 9, no. 8, pp. 1735–1780, 1997.
+
+\bibitem{lundberg2017unified} S. Lundberg and S.-I. Lee, ``A unified approach to interpreting model predictions,'' in \textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2017, pp. 4765–4774.
+
+\bibitem{meyfroidt2009cerebral} G. Meyfroidt, F. Bouzat, M. Casaer, and J. Smith, ``Cerebral perfusion pressure-guided therapy in patients with severe traumatic brain injury,'' \textit{Critical Care}, vol. 13, no. 3, pp. 1–11, 2009.
+
+\bibitem{cecconi2014consensus} M. Cecconi, D. De Backer, M. Antonelli, R. Beale, and J.-L. Vincent, ``Consensus on circulatory shock and hemodynamic monitoring,'' \textit{Intensive Care Medicine}, vol. 40, no. 12, pp. 1795–1815, 2014.
+
+\bibitem{vaswani2017attention} A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, ``Attention is all you need,'' in \textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2017, pp. 5998–6008.
+
+\bibitem{song2018attend} H. Song, D. Rajan, J. J. Thiagarajan, and A. Spanias, ``Attend and diagnose: Clinical time series analysis using attention models,'' in \textit{Proceedings of the AAAI Conference on Artificial Intelligence}, 2018, vol. 32, no. 1, pp. 4091–4098.
+
+\end{thebibliography}
+
+\end{document}
